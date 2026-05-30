@@ -1,6 +1,6 @@
 # Proton Tickets
 
-Versao simples sem pastas, feita para subir pelo celular.
+Central de registros com painel reservado.
 
 ## Render
 
@@ -16,31 +16,11 @@ Start Command:
 npm start
 ```
 
-Environment Variable opcional:
+## Variáveis opcionais
 
 ```txt
 PUBLIC_URL=https://proton-tickets.onrender.com
+TRANSCRIPT_ADMIN_KEY=sua-chave-secreta
 ```
 
-## API
-
-POST `/api/transcripts`
-
-Body JSON:
-
-```json
-{
-  "html": "<html>...</html>",
-  "filename": "registro.html"
-}
-```
-
-Resposta:
-
-```json
-{
-  "ok": true,
-  "id": "...",
-  "url": "https://proton-tickets.onrender.com/t/..."
-}
-```
+Se `TRANSCRIPT_ADMIN_KEY` não for configurada, o projeto usa uma chave padrão já compatível com o bot atualizado.
