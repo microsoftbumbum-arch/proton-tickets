@@ -1,45 +1,46 @@
 # Proton Tickets
 
-Versao simples, sem pastas, feita para subir pelo celular no GitHub.
+Versao simples sem pastas, feita para subir pelo celular.
 
-## Arquivos
-
-- `server.js`: servidor Express com API e pagina de transcript.
-- `package.json`: dependencias e comando de start.
-
-## Rotas
-
-- `GET /`: pagina inicial.
-- `POST /api/transcripts`: recebe o HTML do transcript.
-- `GET /t/:id`: mostra o transcript no navegador.
-
-## Deploy no Render
+## Render
 
 Build Command:
 
-```bash
+```txt
 npm install
 ```
 
 Start Command:
 
-```bash
+```txt
 npm start
 ```
 
-## Exemplo para enviar transcript pelo bot
+Environment Variable opcional:
 
-```js
-const response = await fetch("https://SEU-SITE.onrender.com/api/transcripts", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ html: transcriptHtml })
-});
-
-const data = await response.json();
-console.log(data.url);
+```txt
+PUBLIC_URL=https://proton-tickets.onrender.com
 ```
 
-## Observacao
+## API
 
-Essa versao salva os transcripts na memoria. Se o servidor reiniciar, os transcripts antigos somem. Para comecar e testar, isso ja funciona.
+POST `/api/transcripts`
+
+Body JSON:
+
+```json
+{
+  "html": "<html>...</html>",
+  "filename": "registro.html"
+}
+```
+
+Resposta:
+
+```json
+{
+  "ok": true,
+  "id": "...",
+  "url": "https://proton-tickets.onrender.com/t/..."
+}
+```
