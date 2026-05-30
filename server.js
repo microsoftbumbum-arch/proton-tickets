@@ -83,7 +83,29 @@ function expiresAt(createdAt, ttlDays) {
   return brDate(new Date(created + ttlDays * 24 * 60 * 60 * 1000).toISOString());
 }
 
-function layout(title, content) {
+function normalizeTheme(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (["branco", "white", "claro", "light"].includes(raw)) return "branco";
+  return "roxo";
+}
+
+function themeVars(theme) {
+  if (normalizeTheme(theme) === "branco") {
+    return `:root { color-scheme: light; --bg:#f7f7fb; --panel:#ffffff; --panel2:#f1f2f6; --text:#111827; --muted:#4b5563; --line:#d8dce7; --purple:#111827; --purple2:#374151; --green:#15803d; --red:#dc2626; }
+    body { background: radial-gradient(circle at top left, rgba(17,24,39,.08), transparent 30%), linear-gradient(135deg, #ffffff, #f4f5fa 56%, #eceff5); }
+    .logo { background:linear-gradient(135deg, #111827, #4b5563); color:#fff; box-shadow:0 12px 40px rgba(17,24,39,.16); }
+    .status { color:#111827; background:rgba(17,24,39,.07); border-color:rgba(17,24,39,.18); }
+    .hero,.viewer,.panel { background:rgba(255,255,255,.92); box-shadow:0 24px 80px rgba(17,24,39,.13); }
+    .card { background:rgba(241,242,246,.78); }
+    .viewer-head { background:rgba(241,242,246,.88); }
+    .btn, button { color:#111827; border-color:rgba(17,24,39,.25); background:rgba(17,24,39,.06); }
+    code,input { background:#ffffff; color:#111827; }`;
+  }
+  return `:root { color-scheme: dark; --bg:#0b0414; --panel:#170825; --panel2:#220d36; --text:#f8efff; --muted:#c7b4d8; --line:#4c1d72; --purple:#a855f7; --purple2:#7c3aed; --green:#22c55e; --red:#ef4444; }
+    body { background: radial-gradient(circle at top left, rgba(168,85,247,.24), transparent 30%), radial-gradient(circle at bottom right, rgba(124,58,237,.16), transparent 34%), linear-gradient(135deg, #0b0414, #170825 56%, #090312); }`;
+}
+
+function layout(title, content, theme = "roxo") {
   return `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -92,33 +114,33 @@ function layout(title, content) {
   <meta name="robots" content="noindex,nofollow" />
   <title>${escapeHtml(title)}</title>
   <style>
-    :root { color-scheme: dark; --bg:#0b0414; --panel:#170825; --panel2:#220d36; --text:#f8efff; --muted:#c7b4d8; --line:#4c1d72; --purple:#a855f7; --purple2:#7c3aed; --green:#22c55e; --red:#ef4444; }
+    ${themeVars(theme)}
     * { box-sizing: border-box; }
-    body { margin:0; min-height:100vh; background: radial-gradient(circle at top left, rgba(168,85,247,.24), transparent 30%), radial-gradient(circle at bottom right, rgba(124,58,237,.16), transparent 34%), linear-gradient(135deg, #0b0414, #170825 56%, #090312); color:var(--text); font-family: Inter, Arial, Helvetica, sans-serif; }
+    body { margin:0; min-height:100vh; color:var(--text); font-family: Inter, Arial, Helvetica, sans-serif; }
     .wrap { width:min(1180px, calc(100% - 28px)); margin:0 auto; padding:28px 0; }
     .top { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:22px; }
     .brand { display:flex; align-items:center; gap:12px; font-weight:900; letter-spacing:.3px; }
-    .logo { width:42px; height:42px; border-radius:15px; display:grid; place-items:center; background:linear-gradient(135deg, #a855f7, #6d28d9); color:#fff; box-shadow:0 12px 40px rgba(168,85,247,.35); }
-    .status { color:#d8b4fe; background:rgba(168,85,247,.12); border:1px solid rgba(168,85,247,.30); padding:8px 11px; border-radius:999px; font-size:13px; font-weight:800; }
-    .hero,.viewer,.panel { border:1px solid var(--line); background:rgba(23,8,37,.86); backdrop-filter: blur(12px); border-radius:24px; padding:28px; box-shadow:0 24px 80px rgba(0,0,0,.35); }
+    .logo { width:42px; height:42px; border-radius:15px; display:grid; place-items:center; background:linear-gradient(135deg, var(--purple), var(--purple2)); color:#fff; box-shadow:0 12px 40px rgba(0,0,0,.22); }
+    .status { color:var(--purple); background:color-mix(in srgb, var(--purple) 12%, transparent); border:1px solid color-mix(in srgb, var(--purple) 30%, transparent); padding:8px 11px; border-radius:999px; font-size:13px; font-weight:800; }
+    .hero,.viewer,.panel { border:1px solid var(--line); background:color-mix(in srgb, var(--panel) 86%, transparent); backdrop-filter: blur(12px); border-radius:24px; padding:28px; box-shadow:0 24px 80px rgba(0,0,0,.35); }
     h1 { margin:0 0 10px; font-size:clamp(30px, 5vw, 54px); line-height:1; }
     h2 { margin:0 0 14px; }
     p { color:var(--muted); line-height:1.6; }
     .grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; margin-top:18px; }
-    .card { border:1px solid var(--line); background:rgba(34,13,54,.72); border-radius:18px; padding:18px; }
+    .card { border:1px solid var(--line); background:color-mix(in srgb, var(--panel2) 72%, transparent); border-radius:18px; padding:18px; }
     .card b { display:block; margin-bottom:6px; }
     .viewer { padding:0; overflow:hidden; }
-    .viewer-head { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:18px 20px; border-bottom:1px solid var(--line); background:rgba(34,13,54,.78); }
+    .viewer-head { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:18px 20px; border-bottom:1px solid var(--line); background:color-mix(in srgb, var(--panel2) 78%, transparent); }
     .viewer-title { min-width:0; }
     .viewer-title strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .viewer-title span { display:block; color:var(--muted); font-size:13px; margin-top:3px; }
-    .btn, button { color:#f8efff; text-decoration:none; border:1px solid rgba(168,85,247,.45); padding:9px 12px; border-radius:12px; font-weight:800; font-size:13px; background:rgba(168,85,247,.14); cursor:pointer; }
+    .btn, button { color:var(--text); text-decoration:none; border:1px solid color-mix(in srgb, var(--purple) 45%, transparent); padding:9px 12px; border-radius:12px; font-weight:800; font-size:13px; background:color-mix(in srgb, var(--purple) 14%, transparent); cursor:pointer; }
     .btn.danger, button.danger { border-color:rgba(239,68,68,.45); background:rgba(239,68,68,.12); }
     iframe { width:100%; height:calc(100vh - 146px); min-height:620px; border:0; background:#fff; display:block; }
     code { color:#e9d5ff; background:#090312; border:1px solid var(--line); padding:3px 6px; border-radius:8px; }
     table { width:100%; border-collapse:collapse; overflow:hidden; border-radius:16px; }
     th,td { text-align:left; padding:12px 10px; border-bottom:1px solid var(--line); color:var(--muted); vertical-align:middle; }
-    th { color:#f8efff; font-size:13px; }
+    th { color:var(--text); font-size:13px; }
     .actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
     .settings { display:flex; gap:10px; flex-wrap:wrap; align-items:end; margin:18px 0 22px; }
     label { display:grid; gap:7px; color:var(--muted); font-weight:700; }
@@ -165,6 +187,8 @@ app.post("/api/transcripts", (req, res) => {
   data.records[id] = {
     html,
     filename: String(req.body.filename || "registro.html"),
+    guildId: String(req.body.guildId || req.body.guild_id || ""),
+    theme: normalizeTheme(req.body.theme || req.body.color || req.body.primaryColor),
     createdAt: new Date().toISOString()
   };
   saveData(data);
@@ -190,6 +214,7 @@ app.get("/admin", (req, res) => {
     <tr>
       <td><code>${escapeHtml(id)}</code></td>
       <td>${escapeHtml(record.filename || "registro.html")}</td>
+      <td>${escapeHtml(normalizeTheme(record.theme) === "branco" ? "Branco" : "Roxo")}</td>
       <td>${escapeHtml(brDate(record.createdAt))}</td>
       <td>${escapeHtml(expiresAt(record.createdAt, ttlDays))}</td>
       <td>
@@ -217,7 +242,7 @@ app.get("/admin", (req, res) => {
         <button type="submit">Salvar configuração</button>
         <a class="btn" href="/admin/cleanup?key=${encodeURIComponent(adminKeyFrom(req))}">Limpar expirados</a>
       </form>
-      ${records.length ? `<table><thead><tr><th>ID</th><th>Arquivo</th><th>Criado</th><th>Expira</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty">Nenhum registro salvo ainda.</div>`}
+      ${records.length ? `<table><thead><tr><th>ID</th><th>Arquivo</th><th>Cor</th><th>Criado</th><th>Expira</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty">Nenhum registro salvo ainda.</div>`}
     </section>
   `));
 });
@@ -274,7 +299,7 @@ app.get("/t/:id", (req, res) => {
       </div>
       <iframe sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="${escapeAttr(record.html)}"></iframe>
     </section>
-  `));
+  `, record.theme));
 });
 
 app.get("/raw/:id", (req, res) => {

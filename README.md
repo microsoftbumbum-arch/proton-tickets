@@ -1,6 +1,15 @@
 # Proton Tickets
 
-Central de registros com painel reservado.
+Site/painel dos registros de atendimento.
+
+## Atualização
+
+Agora o registro recebe a cor principal enviada pelo bot:
+
+- `roxo`
+- `branco`
+
+O fundo do registro e da página acompanham a cor escolhida no servidor no momento em que o atendimento foi fechado.
 
 ## Render
 
@@ -15,12 +24,3 @@ Start Command:
 ```txt
 npm start
 ```
-
-## Variáveis opcionais
-
-```txt
-PUBLIC_URL=https://proton-tickets.onrender.com
-TRANSCRIPT_ADMIN_KEY=sua-chave-secreta
-```
-
-Se `TRANSCRIPT_ADMIN_KEY` não for configurada, o projeto usa uma chave padrão já compatível com o bot atualizado.
