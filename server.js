@@ -177,7 +177,7 @@ function inferInfo(html) {
   const headerChannel = first(source, /<discord-header\b[^>]*\bchannel="([^"]*)"/i);
   const channelName = cleanTicketName(headerChannel || title);
 
-  const countRaw = first(source, /Exported\s+(\d+)\s+messages?/i);
+  const countRaw = first(source, /Exported\s+(\d+)\s+messages?/i) || first(source, /Total\s+de\s+mensagens\s*:\s*(\d+)/i);
   const nonBots = profiles.filter(p => !p.bot);
   const staff = nonBots.find(p => /(staff|suporte|support|admin|moder|dono|owner|atendente|equipe)/i.test(p.roleName));
   const client = nonBots.find(p => p.id !== staff?.id) || nonBots[0];
@@ -200,6 +200,43 @@ function inferInfo(html) {
     staffName: String(staffName || '').trim(),
     profileIds: extractAuthorNamesFromMessages(source)
   };
+}
+
+function styleRawTranscript(html, theme = 'roxo') {
+  const light = normalizeTheme(theme) === 'branco';
+  const css = light ? `
+    html,body{background:#f7f7f9!important}
+  ` : `
+    :root{
+      --background-primary:#09070d!important;
+      --background-secondary:#0d0913!important;
+      --background-secondary-alt:#100b17!important;
+      --background-tertiary:#08060b!important;
+      --background-floating:#100b17!important;
+      --channeltextarea-background:#120c1a!important;
+    }
+    html,body{background:#09070d!important;color:#f4effa!important}
+    discord-messages{background:#09070d!important}
+    discord-header{background:#0d0913!important;border-color:rgba(155,110,255,.14)!important}
+    [class*="sidebar"],[class*="Sidebar"],[class*="side-panel"],[class*="left-panel"]{
+      background:#0d0913!important;
+      border-color:rgba(155,110,255,.14)!important;
+    }
+    [class*="content"],[class*="Content"],[class*="messages"],[class*="Messages"],[class*="transcript"],[class*="Transcript"]{
+      background-color:#09070d!important;
+    }
+    [class*="card"],[class*="Card"],[class*="message-box"],[class*="message-content"]{
+      background-color:rgba(18,12,26,.88)!important;
+      border-color:rgba(155,110,255,.13)!important;
+    }
+    ::-webkit-scrollbar-track{background:#09070d!important}
+    ::-webkit-scrollbar-thumb{background:#3b2a50!important;border-radius:12px!important}
+  `;
+
+  const style = `<style id="proton-transcript-polish">${css}</style>`;
+  const source = String(html || '');
+  if (/<\/head>/i.test(source)) return source.replace(/<\/head>/i, `${style}</head>`);
+  return `${style}${source}`;
 }
 
 function shell(title, content, theme = 'roxo') {
@@ -273,10 +310,10 @@ body{
 .fallback{display:grid;place-items:center;background:linear-gradient(145deg,#8b5cf6,#4c1d95);color:#fff;font-size:12px;font-weight:900}
 .person strong{display:block;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
 .person span{display:block;margin-top:1px;color:var(--muted2);font-size:9px}
-.viewer{border-radius:22px;overflow:hidden}
-.viewer-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 18px;border-bottom:1px solid var(--soft)}
+.viewer{border-radius:22px;overflow:hidden;background:${light ? '#fff' : '#09070d'}}
+.viewer-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid var(--soft);background:${light ? 'rgba(255,255,255,.72)' : 'rgba(10,7,14,.92)'}}
 .viewer-head strong{font-size:13px}.viewer-head span{color:var(--muted);font-size:10px}
-iframe{display:block;width:100%;height:72vh;min-height:620px;border:0;background:${light ? '#fff' : '#0d0b12'}}
+iframe{display:block;width:100%;height:72vh;min-height:620px;border:0;background:${light ? '#fff' : '#09070d'}}
 footer{display:flex;justify-content:space-between;gap:14px;padding:14px 18px;border-top:1px solid var(--soft);color:var(--muted2);font-size:10px;line-height:1.5}
 .panel{padding:24px;border-radius:22px}.panel h1{margin:0 0 8px}.panel p{color:var(--muted)}
 table{width:100%;border-collapse:collapse;margin-top:16px}th,td{text-align:left;padding:11px 9px;border-bottom:1px solid var(--soft);color:var(--muted);font-size:12px}th{color:var(--text);font-size:10px}.settings{display:flex;gap:9px;align-items:end;flex-wrap:wrap;margin:16px 0}.settings label{display:grid;gap:6px;color:var(--muted);font-size:11px;font-weight:700}.settings input{background:var(--surface2);border:1px solid var(--line);color:var(--text);padding:10px 11px;border-radius:11px}.empty{padding:18px;border:1px dashed var(--line);border-radius:14px;color:var(--muted)}
@@ -363,7 +400,7 @@ function transcriptPage(id, record) {
       </div>
       <div class="actions">
         <a class="btn primary" href="/raw/${attr(id)}" target="_blank" rel="noopener">Abrir / Imprimir</a>
-        <button class="btn" type="button" onclick="navigator.clipboard.writeText(${JSON.stringify(ticket)}).catch(()=>{})">Copiar ID</button>
+        <button class="btn" id="copy-ticket-id" type="button">Copiar ID</button>
       </div>
     </section>
     ${summary}
@@ -373,6 +410,21 @@ function transcriptPage(id, record) {
       <iframe src="/raw/${attr(id)}" title="Histórico do ticket" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"></iframe>
       <footer><span>Proton For Seller • Transcript salvo automaticamente</span><span>Conteúdo preservado do atendimento original.</span></footer>
     </section>
+    <script>
+      (() => {
+        const button = document.getElementById('copy-ticket-id');
+        if (!button) return;
+        const ticketId = ${JSON.stringify(ticket).replace(/</g, '\\u003c')};
+        button.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(ticketId);
+            const original = button.textContent;
+            button.textContent = 'ID copiado';
+            setTimeout(() => { button.textContent = original; }, 1400);
+          } catch {}
+        });
+      })();
+    </script>
   `, record.theme);
 }
 
@@ -410,7 +462,7 @@ app.post('/api/transcripts', (req, res) => {
     clientName: String(req.body.clientName || req.body.client_name || req.body.customerName || req.body.userName || info.clientName || inferredClient || ''),
     staffName: String(req.body.staffName || req.body.staff_name || req.body.closedByTag || req.body.closed_by_tag || info.staffName || ''),
     closedAt: String(req.body.closedAt || req.body.closed_at || new Date().toISOString()),
-    messageCount: Number.isFinite(supplied) && supplied >= 0 ? supplied : info.messageCount,
+    messageCount: Number.isFinite(supplied) && supplied > 0 ? supplied : info.messageCount,
     profiles: info.profiles,
     theme: normalizeTheme(req.body.theme || req.body.color || req.body.primaryColor),
     createdAt: new Date().toISOString()
@@ -438,7 +490,7 @@ app.get('/raw/:id', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.send(record.html);
+  res.send(styleRawTranscript(record.html, record.theme));
 });
 
 app.get('/admin', (req, res) => {
