@@ -1,314 +1,191 @@
-const express = require("express");
-const crypto = require("crypto");
-const fs = require("fs");
-const path = require("path");
+const express = require('express');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
-const DATA_FILE = path.join(__dirname, "data.json");
+const DATA_FILE = path.join(__dirname, 'data.json');
 const DEFAULT_TTL_DAYS = 30;
-const ADMIN_KEY = process.env.TRANSCRIPT_ADMIN_KEY || process.env.ADMIN_KEY || "owner-1289658955919917157-proton-panel";
+const ADMIN_KEY = process.env.TRANSCRIPT_ADMIN_KEY || process.env.ADMIN_KEY || 'owner-1289658955919917157-proton-panel';
 
-app.use(express.json({ limit: "25mb" }));
-app.use(express.urlencoded({ extended: true, limit: "25mb" }));
+app.use(express.json({ limit: '35mb' }));
+app.use(express.urlencoded({ extended: true, limit: '35mb' }));
 
-function loadData() {
+function loadData(){
   try {
-    const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-    if (!data.records) data.records = {};
-    if (!data.settings) data.settings = { ttlDays: DEFAULT_TTL_DAYS };
-    if (typeof data.settings.ttlDays !== "number") data.settings.ttlDays = DEFAULT_TTL_DAYS;
+    const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    data.records ||= {};
+    data.settings ||= { ttlDays: DEFAULT_TTL_DAYS };
+    if (typeof data.settings.ttlDays !== 'number') data.settings.ttlDays = DEFAULT_TTL_DAYS;
     return data;
   } catch {
     return { records: {}, settings: { ttlDays: DEFAULT_TTL_DAYS } };
   }
 }
-
-function saveData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
-
-function cleanupExpired(data) {
+function saveData(data){ fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2)); }
+function cleanupExpired(data){
   const ttlDays = Number(data.settings?.ttlDays ?? DEFAULT_TTL_DAYS);
-  if (!Number.isFinite(ttlDays) || ttlDays <= 0) return 0;
-  const maxAgeMs = ttlDays * 24 * 60 * 60 * 1000;
+  if (!Number.isFinite(ttlDays) || ttlDays <= 0) return;
+  const limit = ttlDays * 86400000;
   const now = Date.now();
-  let removed = 0;
+  let changed = false;
   for (const [id, record] of Object.entries(data.records || {})) {
-    const created = Date.parse(record.createdAt || "");
-    if (Number.isFinite(created) && now - created > maxAgeMs) {
+    const created = Date.parse(record.createdAt || '');
+    if (Number.isFinite(created) && now - created > limit) {
       delete data.records[id];
-      removed++;
+      changed = true;
     }
   }
-  if (removed) saveData(data);
-  return removed;
+  if (changed) saveData(data);
+}
+function esc(v){ return String(v ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;'); }
+function attr(v){ return esc(v).replaceAll('`','&#096;'); }
+function decode(v){ return String(v || '').replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#039;',"'"); }
+function baseUrl(req){ return (process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, ''); }
+function adminKeyFrom(req){ return String(req.query.key || req.body.key || req.get('x-admin-key') || ''); }
+function isAdmin(req){ return Boolean(ADMIN_KEY && adminKeyFrom(req) === ADMIN_KEY); }
+function brDate(value){
+  const d = new Date(value || '');
+  if (Number.isNaN(d.getTime())) return '-';
+  return d.toLocaleString('pt-BR', { timeZone:'America/Sao_Paulo', dateStyle:'short', timeStyle:'short' });
+}
+function expiresAt(createdAt, ttlDays){
+  if (!ttlDays || ttlDays <= 0) return 'Nunca';
+  const t = Date.parse(createdAt || '');
+  return Number.isFinite(t) ? brDate(new Date(t + ttlDays*86400000).toISOString()) : '-';
+}
+function normalizeTheme(v){ return ['branco','white','claro','light'].includes(String(v || '').toLowerCase()) ? 'branco' : 'roxo'; }
+function first(html, regex){ const m = String(html || '').match(regex); return m ? decode(m[1]) : ''; }
+function safeUrl(v){
+  const s = String(v || '').trim();
+  if (!s) return '';
+  if (s.startsWith('data:image/')) return s;
+  try { const u = new URL(s); return ['http:','https:'].includes(u.protocol) ? s : ''; } catch { return ''; }
+}
+function extractProfiles(html){
+  const m = String(html || '').match(/window\.\$discordMessage\s*=\s*\{\s*profiles\s*:\s*(\{[\s\S]*?\})\s*\}\s*<\/script>/i);
+  if (!m) return [];
+  try {
+    const obj = JSON.parse(m[1]);
+    return Object.entries(obj).map(([id,p]) => ({
+      id,
+      name: String(p?.author || ''),
+      avatar: safeUrl(p?.avatar || ''),
+      roleName: String(p?.roleName || ''),
+      roleColor: String(p?.roleColor || ''),
+      bot: Boolean(p?.bot)
+    }));
+  } catch { return []; }
+}
+function inferInfo(html){
+  const profiles = extractProfiles(html);
+  const guildName = first(html, /<discord-header\b[^>]*\bguild="([^"]*)"/i);
+  const channelName = first(html, /<discord-header\b[^>]*\bchannel="([^"]*)"/i) || first(html, /<title>([^<]*)<\/title>/i);
+  const countRaw = first(html, /Exported\s+(\d+)\s+messages?/i);
+  const nonBots = profiles.filter(p => !p.bot);
+  const staff = nonBots.find(p => /(staff|suporte|support|admin|moder|dono|owner|atendente)/i.test(p.roleName));
+  const client = nonBots.find(p => p.id !== staff?.id) || nonBots[0];
+  return {
+    profiles,
+    guildName,
+    channelName,
+    messageCount: countRaw ? Number(countRaw) : null,
+    clientName: client?.name || '',
+    staffName: staff?.name || profiles.find(p => p.bot)?.name || ''
+  };
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function shell(title, content, theme='roxo'){
+  const light = normalizeTheme(theme) === 'branco';
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${esc(title)}</title><style>
+  :root{color-scheme:${light?'light':'dark'};--bg1:${light?'#f7f7fb':'#050508'};--bg2:${light?'#fff':'#0a0710'};--bg3:${light?'#eceff5':'#13091c'};--surface:${light?'rgba(255,255,255,.9)':'rgba(18,12,28,.78)'};--surface2:${light?'rgba(246,246,250,.9)':'rgba(24,16,38,.7)'};--line:${light?'rgba(17,24,39,.14)':'rgba(146,109,255,.18)'};--soft:${light?'rgba(17,24,39,.07)':'rgba(255,255,255,.05)'};--text:${light?'#111827':'#f4efff'};--muted:${light?'#4b5563':'#c2b8d8'};--muted2:${light?'#6b7280':'#8f86a7'};--purple:${light?'#374151':'#b89fff'};--green:${light?'#15803d':'#86efac'}}
+  *{box-sizing:border-box}body{margin:0;min-height:100vh;color:var(--text);font-family:Inter,Arial,sans-serif;background:radial-gradient(circle at 15% 15%,${light?'rgba(17,24,39,.06)':'rgba(92,51,200,.2)'},transparent 24%),radial-gradient(circle at 85% 8%,${light?'rgba(55,65,81,.05)':'rgba(139,92,246,.14)'},transparent 22%),linear-gradient(135deg,var(--bg1),var(--bg2) 42%,var(--bg3));overflow-x:hidden}.page{width:min(1080px,calc(100% - 24px));margin:22px auto 56px}.brand{display:flex;align-items:center;gap:11px;margin:0 2px 16px;font-weight:900}.logo{width:38px;height:38px;border-radius:13px;display:grid;place-items:center;color:#fff;background:linear-gradient(145deg,#9b73ff,#5430be);box-shadow:0 9px 24px rgba(91,49,190,.25)}.brand small{display:block;color:var(--muted2);font-size:10px;letter-spacing:.7px;text-transform:uppercase;margin-top:2px}.glass{background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface) 88%,transparent));border:1px solid var(--line);backdrop-filter:blur(18px) saturate(135%);box-shadow:0 24px 70px rgba(0,0,0,${light?'.12':'.35'})}.hero{padding:28px;border-radius:26px;animation:up .7s both}.hero-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.hero h1{margin:0;font-size:clamp(28px,5vw,39px);letter-spacing:-1px;line-height:1.03}.hero p{margin:12px 0 0;color:var(--muted);line-height:1.7;max-width:760px}.status{padding:10px 14px;border-radius:999px;background:rgba(22,61,35,.56);color:${light?'#166534':'#d4ffe0'};border:1px solid rgba(134,239,172,.18);font-size:12px;font-weight:800;white-space:nowrap}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}.btn{display:inline-flex;align-items:center;justify-content:center;padding:12px 15px;border-radius:14px;border:1px solid var(--line);background:var(--surface2);color:var(--text);text-decoration:none;font-size:13px;font-weight:800;cursor:pointer}.btn.primary{color:#fff;background:linear-gradient(180deg,rgba(108,66,226,.94),rgba(67,35,129,.96))}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:18px 0}.card{min-height:102px;padding:18px;border-radius:22px}.label{display:block;color:var(--muted2);font-size:11px;text-transform:uppercase;letter-spacing:.9px;margin-bottom:8px}.value{font-weight:800;overflow-wrap:anywhere}.purple{color:var(--purple)}.green{color:var(--green)}.people{padding:18px 20px;border-radius:22px;margin:18px 0}.people-title{font-size:11px;color:var(--muted2);font-weight:800;text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px}.people-list{display:flex;gap:10px;flex-wrap:wrap}.person{display:flex;align-items:center;gap:9px;padding:8px 11px 8px 8px;border:1px solid var(--line);border-radius:15px;background:var(--surface2)}.person img,.fallback{width:34px;height:34px;border-radius:11px;object-fit:cover}.fallback{display:grid;place-items:center;background:linear-gradient(145deg,#8b5cf6,#4c1d95);color:#fff;font-weight:900}.person strong{display:block;font-size:12px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.person span{display:block;color:var(--muted2);font-size:10px;margin-top:2px}.viewer{border-radius:26px;overflow:hidden}.viewer-head{display:flex;justify-content:space-between;align-items:center;padding:20px 22px;border-bottom:1px solid var(--soft)}.viewer-head strong{font-size:15px}.viewer-head span{font-size:12px;color:var(--muted)}iframe{display:block;width:100%;height:72vh;min-height:640px;border:0;background:${light?'#fff':'#0d0b12'}}footer{display:flex;justify-content:space-between;gap:16px;padding:18px 22px;border-top:1px solid var(--soft);color:var(--muted);font-size:12px}.panel{padding:26px;border-radius:26px}.panel h1{margin:0 0 8px}.panel p{color:var(--muted)}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{text-align:left;padding:12px 10px;border-bottom:1px solid var(--soft);color:var(--muted)}th{color:var(--text);font-size:12px}.settings{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:18px 0}.settings label{display:grid;gap:7px;color:var(--muted);font-size:12px;font-weight:700}.settings input{background:var(--surface2);border:1px solid var(--line);color:var(--text);padding:11px 12px;border-radius:12px}.empty{padding:20px;border:1px dashed var(--line);border-radius:16px;color:var(--muted)}@keyframes up{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}@media(max-width:900px){.grid{grid-template-columns:1fr 1fr}}@media(max-width:600px){.page{width:calc(100% - 14px);margin:14px auto 34px}.hero,.panel{padding:20px}.hero-top{flex-direction:column}.grid{grid-template-columns:1fr}.card{min-height:auto}.viewer-head{align-items:flex-start;flex-direction:column;gap:7px}footer{flex-direction:column}.btn{width:100%}table,thead,tbody,tr,th,td{display:block}th{display:none}td{padding:9px 0}}
+  </style></head><body><main class="page"><div class="brand"><div class="logo">P</div><div>Proton System<small>Proton For Seller • Tickets</small></div></div>${content}</main></body></html>`;
 }
 
-function escapeAttr(value) {
-  return escapeHtml(value).replaceAll("`", "&#096;");
+function peopleCards(profiles){
+  if (!profiles?.length) return '';
+  const cards = profiles.slice(0,20).map(p => {
+    const name = p.name || 'Usuário';
+    const avatar = safeUrl(p.avatar);
+    return `<div class="person">${avatar?`<img src="${attr(avatar)}" alt="Avatar de ${attr(name)}" loading="lazy">`:`<div class="fallback">${esc(name.slice(0,1).toUpperCase() || '?')}</div>`}<div><strong>${esc(name)}</strong><span>${esc(p.bot?'BOT':(p.roleName || 'Participante'))}</span></div></div>`;
+  }).join('');
+  return `<section class="people glass"><div class="people-title">Participantes registrados</div><div class="people-list">${cards}</div></section>`;
+}
+function transcriptPage(id, record){
+  const info = inferInfo(record.html);
+  const profiles = record.profiles?.length ? record.profiles : info.profiles;
+  const ticket = record.ticketId || record.channelName || info.channelName || id;
+  const guild = record.guildName || info.guildName || 'Servidor não informado';
+  const client = record.clientName || info.clientName || 'Não informado';
+  const staff = record.staffName || info.staffName || 'Não informado';
+  const count = Number.isFinite(Number(record.messageCount)) ? Number(record.messageCount) : info.messageCount;
+  const countLabel = Number.isFinite(count) ? `${count} ${count===1?'mensagem registrada':'mensagens registradas'}` : 'Histórico preservado';
+  return shell(`Transcript ${ticket} • Proton For Seller`, `
+  <section class="hero glass"><div class="hero-top"><div><h1>Transcript do Ticket ${esc(ticket.startsWith('#')?ticket:`#${ticket}`)}</h1><p>Esta página mostra o histórico final do atendimento após o encerramento do ticket. O conteúdo foi salvo automaticamente para consulta, auditoria e registro.</p></div><div class="status">● Ticket Fechado</div></div><div class="actions"><a class="btn primary" href="/raw/${attr(id)}" target="_blank">Abrir / Imprimir</a><button class="btn" onclick="navigator.clipboard.writeText(${JSON.stringify(ticket)})">Copiar ID do ticket</button></div></section>
+  <section class="grid"><div class="card glass"><span class="label">Servidor</span><div class="value">${esc(guild)}</div></div><div class="card glass"><span class="label">Cliente</span><div class="value">${esc(client)}</div></div><div class="card glass"><span class="label">Atendente</span><div class="value purple">${esc(staff)}</div></div><div class="card glass"><span class="label">Encerrado em</span><div class="value green">${esc(brDate(record.closedAt || record.createdAt))}</div></div></section>
+  ${peopleCards(profiles)}
+  <section class="viewer glass"><div class="viewer-head"><strong>Histórico da conversa</strong><span>${esc(countLabel)}</span></div><iframe src="/raw/${attr(id)}" title="Histórico do ticket" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"></iframe><footer><span><strong>Proton For Seller</strong> • Transcript salvo com sucesso</span><span>Avatares, emojis e anexos preservados quando disponíveis.</span></footer></section>`, record.theme);
 }
 
-function baseUrl(req) {
-  return (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
-}
+app.get('/', (req,res) => res.send(shell('Proton Tickets', `<section class="hero glass"><div class="hero-top"><div><h1>Central de transcripts</h1><p>Registros de atendimento do Proton For Seller, armazenados para consulta após o encerramento dos tickets.</p></div><div class="status">● Online</div></div></section>`)));
 
-function adminKeyFrom(req) {
-  return String(req.query.key || req.body.key || req.get("x-admin-key") || "");
-}
-
-function isAdmin(req) {
-  return ADMIN_KEY && adminKeyFrom(req) === ADMIN_KEY;
-}
-
-function brDate(value) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-}
-
-function expiresAt(createdAt, ttlDays) {
-  if (!ttlDays || ttlDays <= 0) return "Nunca";
-  const created = Date.parse(createdAt || "");
-  if (!Number.isFinite(created)) return "-";
-  return brDate(new Date(created + ttlDays * 24 * 60 * 60 * 1000).toISOString());
-}
-
-function normalizeTheme(value) {
-  const raw = String(value || "").trim().toLowerCase();
-  if (["branco", "white", "claro", "light"].includes(raw)) return "branco";
-  return "roxo";
-}
-
-function themeVars(theme) {
-  if (normalizeTheme(theme) === "branco") {
-    return `:root { color-scheme: light; --bg:#f7f7fb; --panel:#ffffff; --panel2:#f1f2f6; --text:#111827; --muted:#4b5563; --line:#d8dce7; --purple:#111827; --purple2:#374151; --green:#15803d; --red:#dc2626; }
-    body { background: radial-gradient(circle at top left, rgba(17,24,39,.08), transparent 30%), linear-gradient(135deg, #ffffff, #f4f5fa 56%, #eceff5); }
-    .logo { background:linear-gradient(135deg, #111827, #4b5563); color:#fff; box-shadow:0 12px 40px rgba(17,24,39,.16); }
-    .status { color:#111827; background:rgba(17,24,39,.07); border-color:rgba(17,24,39,.18); }
-    .hero,.viewer,.panel { background:rgba(255,255,255,.92); box-shadow:0 24px 80px rgba(17,24,39,.13); }
-    .card { background:rgba(241,242,246,.78); }
-    .viewer-head { background:rgba(241,242,246,.88); }
-    .btn, button { color:#111827; border-color:rgba(17,24,39,.25); background:rgba(17,24,39,.06); }
-    code,input { background:#ffffff; color:#111827; }`;
-  }
-  return `:root { color-scheme: dark; --bg:#0b0414; --panel:#170825; --panel2:#220d36; --text:#f8efff; --muted:#c7b4d8; --line:#4c1d72; --purple:#a855f7; --purple2:#7c3aed; --green:#22c55e; --red:#ef4444; }
-    body { background: radial-gradient(circle at top left, rgba(168,85,247,.24), transparent 30%), radial-gradient(circle at bottom right, rgba(124,58,237,.16), transparent 34%), linear-gradient(135deg, #0b0414, #170825 56%, #090312); }`;
-}
-
-function layout(title, content, theme = "roxo") {
-  return `<!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="robots" content="noindex,nofollow" />
-  <title>${escapeHtml(title)}</title>
-  <style>
-    ${themeVars(theme)}
-    * { box-sizing: border-box; }
-    body { margin:0; min-height:100vh; color:var(--text); font-family: Inter, Arial, Helvetica, sans-serif; }
-    .wrap { width:min(1180px, calc(100% - 28px)); margin:0 auto; padding:28px 0; }
-    .top { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:22px; }
-    .brand { display:flex; align-items:center; gap:12px; font-weight:900; letter-spacing:.3px; }
-    .logo { width:42px; height:42px; border-radius:15px; display:grid; place-items:center; background:linear-gradient(135deg, var(--purple), var(--purple2)); color:#fff; box-shadow:0 12px 40px rgba(0,0,0,.22); }
-    .status { color:var(--purple); background:color-mix(in srgb, var(--purple) 12%, transparent); border:1px solid color-mix(in srgb, var(--purple) 30%, transparent); padding:8px 11px; border-radius:999px; font-size:13px; font-weight:800; }
-    .hero,.viewer,.panel { border:1px solid var(--line); background:color-mix(in srgb, var(--panel) 86%, transparent); backdrop-filter: blur(12px); border-radius:24px; padding:28px; box-shadow:0 24px 80px rgba(0,0,0,.35); }
-    h1 { margin:0 0 10px; font-size:clamp(30px, 5vw, 54px); line-height:1; }
-    h2 { margin:0 0 14px; }
-    p { color:var(--muted); line-height:1.6; }
-    .grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; margin-top:18px; }
-    .card { border:1px solid var(--line); background:color-mix(in srgb, var(--panel2) 72%, transparent); border-radius:18px; padding:18px; }
-    .card b { display:block; margin-bottom:6px; }
-    .viewer { padding:0; overflow:hidden; }
-    .viewer-head { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:18px 20px; border-bottom:1px solid var(--line); background:color-mix(in srgb, var(--panel2) 78%, transparent); }
-    .viewer-title { min-width:0; }
-    .viewer-title strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .viewer-title span { display:block; color:var(--muted); font-size:13px; margin-top:3px; }
-    .btn, button { color:var(--text); text-decoration:none; border:1px solid color-mix(in srgb, var(--purple) 45%, transparent); padding:9px 12px; border-radius:12px; font-weight:800; font-size:13px; background:color-mix(in srgb, var(--purple) 14%, transparent); cursor:pointer; }
-    .btn.danger, button.danger { border-color:rgba(239,68,68,.45); background:rgba(239,68,68,.12); }
-    iframe { width:100%; height:calc(100vh - 146px); min-height:620px; border:0; background:#fff; display:block; }
-    code { color:#e9d5ff; background:#090312; border:1px solid var(--line); padding:3px 6px; border-radius:8px; }
-    table { width:100%; border-collapse:collapse; overflow:hidden; border-radius:16px; }
-    th,td { text-align:left; padding:12px 10px; border-bottom:1px solid var(--line); color:var(--muted); vertical-align:middle; }
-    th { color:var(--text); font-size:13px; }
-    .actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-    .settings { display:flex; gap:10px; flex-wrap:wrap; align-items:end; margin:18px 0 22px; }
-    label { display:grid; gap:7px; color:var(--muted); font-weight:700; }
-    input { background:#090312; border:1px solid var(--line); color:var(--text); padding:10px 12px; border-radius:12px; min-width:170px; }
-    .empty { padding:22px; border:1px dashed var(--line); border-radius:18px; color:var(--muted); }
-    @media(max-width:760px){ .top{align-items:flex-start; flex-direction:column}.grid{grid-template-columns:1fr}.hero,.panel{padding:20px}.viewer-head{align-items:flex-start; flex-direction:column} iframe{min-height:70vh;height:75vh} table, thead, tbody, th, td, tr { display:block; } th{display:none} td{padding:9px 0}.actions{margin-top:8px} }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="top">
-      <div class="brand"><div class="logo">PT</div><div>Proton Tickets</div></div>
-      <div class="status">Online</div>
-    </div>
-    ${content}
-  </div>
-</body>
-</html>`;
-}
-
-app.get("/", (req, res) => {
-  res.send(layout("Proton Tickets", `
-    <section class="hero">
-      <h1>Central de registros</h1>
-      <p>Ambiente online para guardar e consultar atendimentos finalizados com visual limpo, privado e direto.</p>
-      <div class="grid">
-        <div class="card"><b>Envio automático</b><p>O sistema envia o arquivo finalizado para a API.</p></div>
-        <div class="card"><b>Link próprio</b><p>Cada registro recebe uma URL individual para consulta.</p></div>
-        <div class="card"><b>Painel reservado</b><p>O painel administrativo usa chave privada no link.</p></div>
-      </div>
-    </section>
-  `));
-});
-
-app.post("/api/transcripts", (req, res) => {
+app.post('/api/transcripts', (req,res) => {
   const html = req.body.html || req.body.content || req.body.transcript;
-  if (!html || typeof html !== "string") {
-    return res.status(400).json({ ok:false, error:"Envie o HTML em body.html" });
-  }
-
-  const id = crypto.randomBytes(10).toString("hex");
+  if (!html || typeof html !== 'string') return res.status(400).json({ok:false,error:'Envie o HTML em body.html'});
+  const info = inferInfo(html);
+  const id = crypto.randomBytes(10).toString('hex');
   const data = loadData();
   cleanupExpired(data);
+  const supplied = Number(req.body.messageCount ?? req.body.message_count);
   data.records[id] = {
     html,
-    filename: String(req.body.filename || "registro.html"),
-    guildId: String(req.body.guildId || req.body.guild_id || ""),
+    filename: String(req.body.filename || 'registro.html'),
+    guildId: String(req.body.guildId || req.body.guild_id || ''),
+    guildName: String(req.body.guildName || req.body.guild_name || info.guildName || ''),
+    channelName: String(req.body.channelName || req.body.channel_name || info.channelName || ''),
+    ticketId: String(req.body.ticketId || req.body.ticket_id || req.body.channelId || req.body.channel_id || info.channelName || ''),
+    clientName: String(req.body.clientName || req.body.client_name || req.body.customerName || req.body.userName || info.clientName || ''),
+    staffName: String(req.body.staffName || req.body.staff_name || req.body.closedByTag || info.staffName || ''),
+    closedAt: String(req.body.closedAt || req.body.closed_at || new Date().toISOString()),
+    messageCount: Number.isFinite(supplied) && supplied >= 0 ? supplied : info.messageCount,
+    profiles: info.profiles,
     theme: normalizeTheme(req.body.theme || req.body.color || req.body.primaryColor),
     createdAt: new Date().toISOString()
   };
   saveData(data);
-
-  res.json({ ok:true, id, url:`${baseUrl(req)}/t/${id}` });
+  res.json({ok:true,id,url:`${baseUrl(req)}/t/${id}`,rawUrl:`${baseUrl(req)}/raw/${id}`});
 });
 
-app.get("/admin", (req, res) => {
-  if (!isAdmin(req)) {
-    return res.status(403).send(layout("Acesso restrito", `
-      <section class="hero">
-        <h1>Acesso restrito</h1>
-        <p>O painel exige uma chave válida.</p>
-      </section>
-    `));
-  }
-
-  const data = loadData();
-  cleanupExpired(data);
-  const ttlDays = Number(data.settings.ttlDays ?? DEFAULT_TTL_DAYS);
-  const records = Object.entries(data.records || {}).sort((a, b) => Date.parse(b[1].createdAt || "") - Date.parse(a[1].createdAt || ""));
-  const rows = records.map(([id, record]) => `
-    <tr>
-      <td><code>${escapeHtml(id)}</code></td>
-      <td>${escapeHtml(record.filename || "registro.html")}</td>
-      <td>${escapeHtml(normalizeTheme(record.theme) === "branco" ? "Branco" : "Roxo")}</td>
-      <td>${escapeHtml(brDate(record.createdAt))}</td>
-      <td>${escapeHtml(expiresAt(record.createdAt, ttlDays))}</td>
-      <td>
-        <div class="actions">
-          <a class="btn" href="/t/${escapeHtml(id)}" target="_blank">Abrir</a>
-          <form method="post" action="/admin/delete" onsubmit="return confirm('Apagar este registro?')">
-            <input type="hidden" name="key" value="${escapeHtml(adminKeyFrom(req))}">
-            <input type="hidden" name="id" value="${escapeHtml(id)}">
-            <button class="danger" type="submit">Apagar</button>
-          </form>
-        </div>
-      </td>
-    </tr>
-  `).join("");
-
-  res.send(layout("Painel de registros", `
-    <section class="panel">
-      <h1>Painel de registros</h1>
-      <p>Total salvo: <b>${records.length}</b>. Ajuste o tempo de retenção e consulte os registros quando precisar.</p>
-      <form class="settings" method="post" action="/admin/settings">
-        <input type="hidden" name="key" value="${escapeHtml(adminKeyFrom(req))}">
-        <label>Dias para apagar automaticamente
-          <input type="number" name="ttlDays" min="0" max="3650" value="${escapeHtml(ttlDays)}">
-        </label>
-        <button type="submit">Salvar configuração</button>
-        <a class="btn" href="/admin/cleanup?key=${encodeURIComponent(adminKeyFrom(req))}">Limpar expirados</a>
-      </form>
-      ${records.length ? `<table><thead><tr><th>ID</th><th>Arquivo</th><th>Cor</th><th>Criado</th><th>Expira</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty">Nenhum registro salvo ainda.</div>`}
-    </section>
-  `));
+app.get('/t/:id', (req,res) => {
+  const data = loadData(); cleanupExpired(data);
+  const record = data.records[req.params.id];
+  if (!record) return res.status(404).send(shell('Transcript não encontrado', `<section class="hero glass"><h1>Transcript não encontrado</h1><p>O link pode estar incorreto ou o registro pode ter expirado.</p></section>`));
+  res.send(transcriptPage(req.params.id, record));
 });
-
-app.post("/admin/settings", (req, res) => {
-  if (!isAdmin(req)) return res.status(403).send("Acesso negado.");
+app.get('/raw/:id', (req,res) => {
+  const data = loadData(); cleanupExpired(data);
+  const record = data.records[req.params.id];
+  if (!record) return res.status(404).send('Registro não encontrado.');
+  res.setHeader('Content-Type','text/html; charset=utf-8');
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.send(record.html);
+});
+app.get('/admin', (req,res) => {
+  if (!isAdmin(req)) return res.status(403).send(shell('Acesso restrito', `<section class="hero glass"><h1>Acesso restrito</h1><p>O painel exige uma chave válida.</p></section>`));
+  const data = loadData(); cleanupExpired(data);
+  const ttl = Number(data.settings.ttlDays ?? DEFAULT_TTL_DAYS);
+  const records = Object.entries(data.records || {}).sort((a,b)=>Date.parse(b[1].createdAt||'')-Date.parse(a[1].createdAt||''));
+  const rows = records.map(([id,r]) => { const i=inferInfo(r.html); const ticket=r.ticketId||r.channelName||i.channelName||id; return `<tr><td>${esc(ticket)}</td><td>${esc(r.guildName||i.guildName||'-')}</td><td>${esc(brDate(r.createdAt))}</td><td>${esc(expiresAt(r.createdAt,ttl))}</td><td><a class="btn" href="/t/${attr(id)}" target="_blank">Abrir</a></td></tr>`; }).join('');
+  res.send(shell('Painel de transcripts', `<section class="panel glass"><h1>Painel de transcripts</h1><p>Total salvo: <strong>${records.length}</strong>.</p><form class="settings" method="post" action="/admin/settings"><input type="hidden" name="key" value="${attr(adminKeyFrom(req))}"><label>Dias para apagar automaticamente<input type="number" name="ttlDays" min="0" max="3650" value="${attr(ttl)}"></label><button class="btn primary" type="submit">Salvar</button></form>${records.length?`<table><thead><tr><th>Ticket</th><th>Servidor</th><th>Criado</th><th>Expira</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table>`:`<div class="empty">Nenhum transcript salvo ainda.</div>`}</section>`));
+});
+app.post('/admin/settings', (req,res) => {
+  if (!isAdmin(req)) return res.status(403).send('Acesso negado.');
   const data = loadData();
-  const ttlDays = Math.max(0, Math.min(3650, Number(req.body.ttlDays || DEFAULT_TTL_DAYS)));
-  data.settings.ttlDays = Number.isFinite(ttlDays) ? ttlDays : DEFAULT_TTL_DAYS;
+  const ttl = Math.max(0, Math.min(3650, Number(req.body.ttlDays || DEFAULT_TTL_DAYS)));
+  data.settings.ttlDays = Number.isFinite(ttl) ? ttl : DEFAULT_TTL_DAYS;
   saveData(data);
   res.redirect(`/admin?key=${encodeURIComponent(adminKeyFrom(req))}`);
-});
-
-app.post("/admin/delete", (req, res) => {
-  if (!isAdmin(req)) return res.status(403).send("Acesso negado.");
-  const data = loadData();
-  const id = String(req.body.id || "");
-  if (id && data.records[id]) {
-    delete data.records[id];
-    saveData(data);
-  }
-  res.redirect(`/admin?key=${encodeURIComponent(adminKeyFrom(req))}`);
-});
-
-app.get("/admin/cleanup", (req, res) => {
-  if (!isAdmin(req)) return res.status(403).send("Acesso negado.");
-  const data = loadData();
-  cleanupExpired(data);
-  res.redirect(`/admin?key=${encodeURIComponent(adminKeyFrom(req))}`);
-});
-
-app.get("/t/:id", (req, res) => {
-  const data = loadData();
-  cleanupExpired(data);
-  const record = data.records[req.params.id];
-  if (!record) {
-    return res.status(404).send(layout("Registro não encontrado", `
-      <section class="hero">
-        <h1>Registro não encontrado</h1>
-        <p>O link pode estar incorreto ou o registro pode ter expirado.</p>
-      </section>
-    `));
-  }
-
-  const date = brDate(record.createdAt);
-  res.send(layout("Registro de atendimento", `
-    <section class="viewer">
-      <div class="viewer-head">
-        <div class="viewer-title">
-          <strong>Registro de atendimento</strong>
-          <span>ID ${escapeHtml(req.params.id)} • ${escapeHtml(date)}</span>
-        </div>
-        <a class="btn" href="/raw/${escapeHtml(req.params.id)}" target="_blank">Abrir em tela cheia</a>
-      </div>
-      <iframe sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="${escapeAttr(record.html)}"></iframe>
-    </section>
-  `, record.theme));
-});
-
-app.get("/raw/:id", (req, res) => {
-  const data = loadData();
-  cleanupExpired(data);
-  const record = data.records[req.params.id];
-  if (!record) return res.status(404).send("Registro não encontrado.");
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(record.html);
 });
 
 const port = process.env.PORT || 3000;

@@ -1,26 +1,14 @@
 # Proton Tickets
 
-Site/painel dos registros de atendimento.
-
-## Atualização
-
-Agora o registro recebe a cor principal enviada pelo bot:
-
-- `roxo`
-- `branco`
-
-O fundo do registro e da página acompanham a cor escolhida no servidor no momento em que o atendimento foi fechado.
+Site de transcripts do Proton For Seller.
 
 ## Render
+- Build Command: `npm install`
+- Start Command: `npm start`
 
-Build Command:
-
-```txt
-npm install
-```
-
-Start Command:
-
-```txt
-npm start
-```
+## Atualização 2.0
+- novo visual preto/roxo baseado no layout enviado;
+- nomes e dados do ticket vêm do transcript real;
+- preserva avatares e emojis do Discord quando o HTML original contém esses dados;
+- imagens/anexos continuam aparecendo no transcript original;
+- compatível com o endpoint existente `POST /api/transcripts`.
