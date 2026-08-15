@@ -202,10 +202,31 @@ function inferInfo(html) {
   };
 }
 
+function visibleMessageCount(html) {
+  const source = String(html || '');
+  const profiles = extractProfiles(source);
+  const botIds = new Set(profiles.filter(profile => profile.bot).map(profile => profile.id));
+  let count = 0;
+
+  for (const match of source.matchAll(/<discord-message\b([^>]*)>/gi)) {
+    const attrs = match[1] || '';
+    const profileMatch = attrs.match(/\bprofile="([^"]+)"/i);
+    const profileId = profileMatch?.[1] || '';
+    if (!profileId || !botIds.has(profileId)) count++;
+  }
+
+  return count;
+}
+
 function styleRawTranscript(html, theme = 'roxo') {
+  const source = String(html || '');
   const light = normalizeTheme(theme) === 'branco';
+  const profiles = extractProfiles(source);
+  const botIds = profiles.filter(profile => profile.bot).map(profile => profile.id);
+  const hideBotsCss = botIds.map(id => `discord-message[profile="${String(id).replace(/"/g, '\\"')}"]{display:none!important}`).join('\n');
   const css = light ? `
     html,body{background:#f7f7f9!important}
+    ${hideBotsCss}
   ` : `
     :root{
       --background-primary:#09070d!important;
@@ -231,10 +252,10 @@ function styleRawTranscript(html, theme = 'roxo') {
     }
     ::-webkit-scrollbar-track{background:#09070d!important}
     ::-webkit-scrollbar-thumb{background:#3b2a50!important;border-radius:12px!important}
+    ${hideBotsCss}
   `;
 
   const style = `<style id="proton-transcript-polish">${css}</style>`;
-  const source = String(html || '');
   if (/<\/head>/i.test(source)) return source.replace(/<\/head>/i, `${style}</head>`);
   return `${style}${source}`;
 }
@@ -376,8 +397,8 @@ function transcriptPage(id, record) {
   const client = String(record.clientName || info.clientName || inferClientFromChannel(ticket) || '').trim();
   const staff = String(record.staffName || info.staffName || '').trim();
   const closed = brDate(record.closedAt || record.createdAt);
-  const count = Number.isFinite(Number(record.messageCount)) ? Number(record.messageCount) : info.messageCount;
-  const countLabel = Number.isFinite(count) ? `${count} ${count === 1 ? 'mensagem' : 'mensagens'}` : 'Histórico completo';
+  const count = visibleMessageCount(record.html);
+  const countLabel = `${count} ${count === 1 ? 'mensagem' : 'mensagens'}`;
 
   const rows = [
     infoRow('Servidor', guild),
@@ -462,7 +483,7 @@ app.post('/api/transcripts', (req, res) => {
     clientName: String(req.body.clientName || req.body.client_name || req.body.customerName || req.body.userName || info.clientName || inferredClient || ''),
     staffName: String(req.body.staffName || req.body.staff_name || req.body.closedByTag || req.body.closed_by_tag || info.staffName || ''),
     closedAt: String(req.body.closedAt || req.body.closed_at || new Date().toISOString()),
-    messageCount: Number.isFinite(supplied) && supplied > 0 ? supplied : info.messageCount,
+    messageCount: visibleMessageCount(html),
     profiles: info.profiles,
     theme: normalizeTheme(req.body.theme || req.body.color || req.body.primaryColor),
     createdAt: new Date().toISOString()
